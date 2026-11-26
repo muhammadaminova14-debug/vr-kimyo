@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="uz"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>VR Kimyo</title>
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:system-ui,sans-serif;color:#fff}
+canvas{display:block;touch-action:none}
+#st{position:fixed;inset:0;background:#0b1020;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:16px;z-index:9}
+#st p{max-width:600px;margin:0;line-height:1.55}
+#st button{font-size:22px;padding:14px 34px;border:0;border-radius:14px;background:#4ade80;color:#012}
+video{position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none}
+#dbg{position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:6;font-size:13px;background:rgba(0,0,0,.6);padding:4px 10px;border-radius:8px;pointer-events:none;white-space:nowrap}
+</style></head><body>
+<div id="st"><h2 style="margin:0">🧪 VR Kimyo</h2>
+<p>Telefonni gorizontal qilib kaskaga joylang. Orqa kamera xonangizni va qo'lingizni ko'rsatadi.<br>
+<b>✋ 3 ta barmog'ingizni ko'taring</b> (rasmdagidek) — oldingizda <b>stol va kimyoviy moddalar paydo bo'ladi</b>.<br>
+<b>Bosh va ko'rsatkich barmoqni chimchilab</b> probirkani ushlang, stakan ustiga olib borib qo'yib yuboring — quyiladi.<br>
+Ranglar aralashadi, 3-modda qo'shsangiz <b>BUM!</b> 💥<br>✊ Musht qilib 1 soniya tursangiz stakan tozalanadi. 3 barmoqni yana ko'rsatsangiz stol yangi joyda paydo bo'ladi.</p>
+<button id="go">Boshlash</button><small id="msg"></small></div>
+<video id="v" playsinline muted></video><div id="dbg"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
+<script>
+const $=id=>document.getElementById(id);function dbg(t){$('dbg').textContent=t}
+const cl=(x,a,b)=>Math.max(a,Math.min(b,x));
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.outputEncoding=THREE.sRGBEncoding;document.body.appendChild(renderer.domElement);
+const scene=new THREE.Scene(),head=new THREE.Object3D();scene.add(head);
+const T=Math.tan(37.5*Math.PI/180);
+const camL=new THREE.PerspectiveCamera(75,1,.02,30),camR=camL.clone();camL.position.x=-.012;camR.position.x=.012;head.add(camL,camR);
+let vplane=null;
+function rs(){renderer.setSize(innerWidth,innerHeight);camL.aspect=camR.aspect=innerWidth/2/innerHeight;camL.updateProjectionMatrix();camR.updateProjectionMatrix();if(vplane){const h=2*5*T;vplane.scale.set(h*camL.aspect,h,1)}}
+addEventListener('resize',rs);rs();
+scene.add(new THREE.HemisphereLight(0xffffff,0x667788,1.2));const sun=new THREE.DirectionalLight(0xffffff,.9);sun.position.set(1,2,1);scene.add(sun);
+const flashP=new THREE.Mesh(new THREE.PlaneGeometry(2,2),new THREE.MeshBasicMaterial({color:0xffc060,transparent:true,opacity:0,depthTest:false,depthWrite:false}));flashP.position.z=-.4;flashP.renderOrder=20;head.add(flashP);
+let AC;function snd(f,d,type='sine'){try{AC=AC||new AudioContext();const o=AC.createOscillator(),g=AC.createGain();o.type=type;o.frequency.value=f;g.gain.value=.25;o.connect(g);g.connect(AC.destination);
+ o.frequency.exponentialRampToValueAtTime(type==='sawtooth'?30:f*2,AC.currentTime+d);g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+d);o.start();o.stop(AC.currentTime+d)}catch(e){}}
+// zarrachalar
+const N=400,pp=new Float32Array(N*3),pc=new Float32Array(N*3),pv=new Float32Array(N*3),pl=new Float32Array(N),pg=new THREE.BufferGeometry();
+pg.setAttribute('position',new THREE.BufferAttribute(pp,3));pg.setAttribute('color',new THREE.BufferAttribute(pc,3));
+const pts=new THREE.Points(pg,new THREE.PointsMaterial({size:.02,vertexColors:true,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));pts.frustumCulled=false;scene.add(pts);
+let pi=0,boomT=0;for(let i=0;i<N;i++)pp[i*3+1]=-99;
+function emit(p,v,c,l){const i=pi++%N;pp.set([p.x,p.y,p.z],i*3);pv.set(v,i*3);pc.set([c.r,c.g,c.b],i*3);pl[i]=l}
+function pstep(dt){for(let i=0;i<N;i++){if(pl[i]>0){pl[i]-=dt;for(let k=0;k<3;k++)pp[i*3+k]+=pv[i*3+k]*dt;if(boomT>0)pv[i*3+1]-=1.2*dt}else pp[i*3+1]=-99}pg.attributes.position.needsUpdate=true;pg.attributes.color.needsUpdate=true}
+// laboratoriya (3 barmoq ishorasidan keyin paydo bo'ladi)
+const lab=new THREE.Group();lab.visible=false;scene.add(lab);
+const mtl=new THREE.MeshStandardMaterial({color:0x9ca3af,roughness:.5,metalness:.4});
+const tb=new THREE.Mesh(new THREE.BoxGeometry(1.2,.04,.7),new THREE.MeshStandardMaterial({color:0xf4f4f5,roughness:.2}));tb.position.y=-.02;lab.add(tb);
+[[-.55,-.3],[.55,-.3],[-.55,.3],[.55,.3]].forEach(([x,z])=>{const l=new THREE.Mesh(new THREE.CylinderGeometry(.025,.025,1,8),mtl);l.position.set(x,-.54,z);lab.add(l)});
+const glass=()=>new THREE.MeshPhysicalMaterial({color:0xdff1ff,transparent:true,opacity:.3,roughness:.04,clearcoat:1,side:THREE.DoubleSide,depthWrite:false});
+const V=a=>a.map(([x,y])=>new THREE.Vector2(x,y));
+const FP=V([[0,0],[.045,0],[.05,.008],[.03,.07],[.016,.1],[.016,.135],[.021,.14]]),LP=V([[0,.003],[.042,.003],[.047,.009],[.035,.05],[0,.05]]),BP=V([[0,0],[.055,0],[.06,.14]]);
+const beaker=new THREE.Mesh(new THREE.LatheGeometry(BP,28),glass());beaker.position.set(0,0,.14);lab.add(beaker);
+const lg=new THREE.CylinderGeometry(.053,.05,.12,28);lg.translate(0,.06,0);
+const liquid=new THREE.Mesh(lg,new THREE.MeshPhysicalMaterial({color:0xaaaaaa,transparent:true,opacity:.85,roughness:.1,emissive:0x000000}));liquid.position.copy(beaker.position);liquid.scale.y=.001;lab.add(liquid);
+function stk(t,c){const k=document.createElement('canvas');k.width=128;k.height=96;const g=k.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,128,96);g.fillStyle=c;g.fillRect(0,0,128,16);g.fillStyle='#111';g.font='bold '+Math.min(46,200/t.length)+'px system-ui';g.textAlign='center';g.fillText(t,64,66);return new THREE.CanvasTexture(k)}
+const defs=[['Suv',0x9bd8ff,-.3,'H₂O'],['Qizil',0xe11d48,-.15,'Co(NO₃)₂'],['Ko\'k',0x2563eb,0,'CuSO₄'],['Sariq',0xfacc15,.15,'K₂CrO₄'],['Yashil',0x16a34a,.3,'NiCl₂']];
+const flasks=defs.map(([n,c,x,f])=>{const g=new THREE.Group();
+ g.add(new THREE.Mesh(new THREE.LatheGeometry(FP,24).translate(0,-.06,0),glass()));
+ g.add(new THREE.Mesh(new THREE.LatheGeometry(LP,24).translate(0,-.06,0),new THREE.MeshPhysicalMaterial({color:c,transparent:true,opacity:.85,roughness:.1,emissive:c,emissiveIntensity:.15})));
+ const st=new THREE.Mesh(new THREE.PlaneGeometry(.05,.0375),new THREE.MeshBasicMaterial({map:stk(f,'#'+new THREE.Color(c).getHexString())}));st.position.set(0,-.03,.047);g.add(st);
+ g.visible=false;g.userData={n,c,lx:x,state:'home',t:0,side:1,gd:.8,home:new THREE.Vector3()};scene.add(g);return g});
+// aralashma
+let mix=[],level=0,water=0,labT=0;
+function mixColor(){if(!mix.length)return new THREE.Color(0x9bd8ff);const k=new THREE.Color(0,0,0);mix.forEach(n=>k.add(new THREE.Color(defs.find(d=>d[0]===n)[1])));k.multiplyScalar(1/mix.length);return k.lerp(new THREE.Color(1,1,1),Math.min(.6,water*.2))}
+function updLiquid(){liquid.scale.y=Math.max(.001,level);if(mix.length||water){const c=mixColor();liquid.material.color.copy(c);liquid.material.emissive.copy(c).multiplyScalar(.3)}}
+function resetMix(){mix=[];level=0;water=0;updLiquid();snd(300,.3)}
+const tmp=new THREE.Vector3(),bw=new THREE.Vector3(),rt=new THREE.Vector3(),zA=new THREE.Vector3(),tgt=new THREE.Vector3(),fwd=new THREE.Vector3(0,0,-1);
+const qY=new THREE.Quaternion(),qT=new THREE.Quaternion();
+function beakerW(o){return lab.localToWorld(o.set(0,.14,.14))}
+function explode(){boomT=1.5;flashP.material.opacity=.7;snd(150,1.3,'sawtooth');beakerW(bw);
+ const cs=[0xf97316,0xef4444,0xfacc15,0xffffff].map(h=>new THREE.Color(h));
+ for(let i=0;i<300;i++){const v=new THREE.Vector3(Math.random()-.5,Math.random()*.7,Math.random()-.5).normalize().multiplyScalar(.3+Math.random()*1.1);emit(bw,[v.x,v.y,v.z],cs[i%4],1+Math.random())}
+ mix=[];level=0;water=0;updLiquid()}
+function afterPour(n){if(n==='Suv')water++;else mix.push(n);level=Math.min(1,level+.3);updLiquid();
+ if(mix.length>=3||(mix.includes('Qizil')&&mix.includes('Yashil')))setTimeout(explode,350)}
+const pop=k=>{k=cl(k,0,1);return k>=1?1:1+2.70158*Math.pow(k-1,3)+1.70158*Math.pow(k-1,2)};
+function spawnLab(){const f=fwd.set(0,0,-1).applyQuaternion(head.quaternion);f.y=0;if(f.lengthSq()<.05)f.set(0,0,-1);f.normalize();
+ lab.scale.setScalar(1);lab.position.set(f.x*.85,-.32,f.z*.85);lab.rotation.y=Math.atan2(-f.x,-f.z);lab.visible=true;lab.updateMatrixWorld(true);
+ flasks.forEach(x=>{const u=x.userData;u.state='home';u.t=0;x.visible=true;u.home.copy(lab.localToWorld(tmp.set(u.lx,.06,-.12)));x.position.copy(u.home);x.quaternion.copy(lab.quaternion)});
+ hs.forEach(h=>h.held=null);labT=0;snd(520,.3,'triangle');
+ const c=new THREE.Color(0x4ade80);for(let i=0;i<60;i++){const v=new THREE.Vector3(Math.random()-.5,Math.random()*.5,Math.random()-.5).normalize().multiplyScalar(.4);emit(lab.position,[v.x,v.y,v.z],c,.8)}}
+function labStep(dt){if(!lab.visible)return;labT+=dt;lab.scale.setScalar(Math.max(.001,pop(labT/.7)));lab.updateMatrixWorld(true);qY.copy(lab.quaternion);beakerW(bw);
+ rt.set(1,0,0).applyQuaternion(qY);zA.set(0,0,1).applyQuaternion(qY);
+ flasks.forEach((f,i)=>{const u=f.userData;f.scale.setScalar(Math.max(.001,pop((labT-.1-i*.08)/.5)));
+  if(u.state==='pour'){u.t+=dt;tgt.copy(bw).addScaledVector(rt,u.side*.085);tgt.y+=.1;f.position.lerp(tgt,.15);
+   qT.setFromAxisAngle(zA,u.side*2.1*Math.min(1,u.t/.5));f.quaternion.copy(qT).multiply(qY);
+   if(u.t>.45&&u.t<1.4){tmp.set(0,.08,0).applyQuaternion(qT).add(f.position);emit(tmp,[0,-.5,0],new THREE.Color(u.c),.35)}
+   if(u.t>1.5){u.state='back';afterPour(u.n)}}
+  else if(u.state==='back'){f.position.lerp(u.home,.12);f.quaternion.slerp(qY,.15);if(f.position.distanceTo(u.home)<.01){f.position.copy(u.home);f.quaternion.copy(qY);u.state='home'}}})}
+// qo'llar
+let results=[],cool=0;
+const hs=[0,1].map(()=>({pinch:false,held:null,g3:0,fist:0,init:false,cnt:0,dir:new THREE.Vector3(0,0,-1),cur:new THREE.Vector3()}));
+const curs=[0,1].map(()=>{const m=new THREE.Mesh(new THREE.SphereGeometry(.012,12,10),new THREE.MeshBasicMaterial({color:0x22e5ff,depthTest:false,transparent:true,opacity:.9}));m.renderOrder=10;m.visible=false;scene.add(m);return m});
+const ex=(lm,t,p)=>Math.hypot(lm[t].x-lm[0].x,lm[t].y-lm[0].y)>Math.hypot(lm[p].x-lm[0].x,lm[p].y-lm[0].y)*1.05;
+const raw=new THREE.Vector3();
+function handStep(dt){cool=Math.max(0,cool-dt);hs.forEach((h,i)=>{const lm=results[i];curs[i].visible=!!lm;
+ if(!lm){h.held=null;h.pinch=false;h.fist=0;h.g3=0;h.init=false;h.cnt=0;return}
+ const sz=Math.hypot(lm[0].x-lm[9].x,lm[0].y-lm[9].y)||.1,r=Math.hypot(lm[4].x-lm[8].x,lm[4].y-lm[8].y)/sz;
+ if(!h.pinch&&r<.42)h.pinch=true;else if(h.pinch&&r>.7)h.pinch=false;
+ const u=(lm[4].x+lm[8].x)/2,v=(lm[4].y+lm[8].y)/2;
+ raw.set((u-.5)*2*T*camL.aspect,-(v-.5)*2*T,-1).normalize().applyQuaternion(head.quaternion);
+ if(!h.init){h.dir.copy(raw);h.init=true}else h.dir.lerp(raw,.5).normalize();
+ curs[i].position.copy(h.dir).multiplyScalar(.6);curs[i].material.color.set(h.pinch?0xfacc15:0x22e5ff);
+ // ishoralar
+ const c4=[[8,6],[12,10],[16,14],[20,18]].filter(([t,p])=>ex(lm,t,p)).length,th=Math.hypot(lm[4].x-lm[17].x,lm[4].y-lm[17].y)>Math.hypot(lm[3].x-lm[17].x,lm[3].y-lm[17].y)*1.2;
+ h.cnt=c4+(th?1:0);const three=!h.pinch&&(c4===3||(c4===2&&th));
+ if(three){h.g3+=dt;if(h.g3>.7&&cool<=0){spawnLab();cool=2.5;h.g3=-100}}else h.g3=0;
+ const fist=!h.pinch&&c4===0;h.fist=fist?h.fist+dt:Math.min(0,h.fist+dt);if(h.fist>1&&lab.visible){resetMix();h.fist=-3}
+ // ushlash
+ if(lab.visible&&h.pinch&&!h.held){let best=null,ba=9;flasks.forEach(f=>{if(f.userData.state!=='home')return;const a=h.dir.angleTo(f.position);if(a<.11&&a<ba){ba=a;best=f}});
+  if(best){h.held=best;best.userData.state='held';best.userData.gd=best.position.length();snd(700,.12)}}
+ if(h.held){const f=h.held;if(h.pinch)f.position.lerp(tmp.copy(h.dir).multiplyScalar(f.userData.gd),.5);
+  else{h.held=null;beakerW(bw);tmp.copy(bw).y+=.05;const a=f.position.angleTo(tmp);f.userData.state=a<.16?'pour':'back';f.userData.t=0;
+   f.userData.side=(f.position.x-bw.x)*rt.x+(f.position.z-bw.z)*rt.z>=0?1:-1}}})}
+// bosh sensori
+const zee=new THREE.Vector3(0,0,1),eu=new THREE.Euler(),q0=new THREE.Quaternion(),q1=new THREE.Quaternion(-Math.SQRT1_2,0,0,Math.SQRT1_2);
+let ori=null,a0=null,sensor=false,dy=0,dp=0,drag=null;
+addEventListener('deviceorientation',e=>{if(e.alpha==null)return;sensor=true;if(a0==null)a0=e.alpha;ori=e});
+function headPose(){if(sensor){const r=Math.PI/180,o=((screen.orientation&&screen.orientation.angle)||90)*r;eu.set(ori.beta*r,(ori.alpha-a0)*r,-ori.gamma*r,'YXZ');head.quaternion.setFromEuler(eu);head.quaternion.multiply(q1);head.quaternion.multiply(q0.setFromAxisAngle(zee,-o))}else head.rotation.set(dp,dy,0,'YXZ')}
+addEventListener('pointerdown',e=>drag=[e.clientX,e.clientY]);addEventListener('pointerup',()=>drag=null);
+addEventListener('pointermove',e=>{if(drag&&!sensor){dy-=(e.clientX-drag[0])*.004;dp=cl(dp-(e.clientY-drag[1])*.004,-1,1);drag=[e.clientX,e.clientY]}});
+// sikl
+let last=performance.now();
+function loop(now){const dt=Math.min(.05,(now-last)/1000);last=now;headPose();head.updateMatrixWorld(true);handStep(dt);labStep(dt);
+ boomT=Math.max(0,boomT-dt);flashP.material.opacity=Math.max(0,flashP.material.opacity-dt*1.2);pstep(dt);
+ dbg((lab.visible?'':'✋ 3 barmoq ko\'rsating → stol paydo bo\'ladi | ')+'Qo\'llar: '+results.length+' | barmoq: '+Math.max(hs[0].cnt,hs[1].cnt)+(hs.some(h=>h.pinch)?' | CHIMCHILADI':'')+(hs.some(h=>h.held)?' | USHLADI':''));
+ const w=innerWidth/2,h=innerHeight;renderer.setScissorTest(true);
+ renderer.setViewport(0,0,w,h);renderer.setScissor(0,0,w,h);renderer.render(scene,camL);
+ renderer.setViewport(w,0,w,h);renderer.setScissor(w,0,w,h);renderer.render(scene,camR);requestAnimationFrame(loop)}
+// kamera + MediaPipe
+$('go').onclick=async()=>{$('go').disabled=true;$('msg').textContent='Kamera ochilmoqda...';
+ try{await document.documentElement.requestFullscreen()}catch(e){}
+ try{await screen.orientation.lock('landscape')}catch(e){}
+ try{const v=$('v');v.srcObject=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:640},height:{ideal:480}},audio:false});await v.play();
+  const vt=new THREE.VideoTexture(v);vt.minFilter=THREE.LinearFilter;vt.encoding=THREE.sRGBEncoding;
+  vplane=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.MeshBasicMaterial({map:vt,depthTest:false,depthWrite:false,toneMapped:false}));vplane.renderOrder=-10;vplane.position.z=-5;head.add(vplane);rs();
+  $('msg').textContent='Qo\'l modeli yuklanmoqda (10-20 soniya)...';
+  const hands=new Hands({locateFile:f=>'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/'+f});
+  hands.setOptions({maxNumHands:2,modelComplexity:0,minDetectionConfidence:.6,minTrackingConfidence:.5});
+  await hands.initialize();hands.onResults(r=>{results=r.multiHandLandmarks||[]});
+  let busy=false;(async function feed(){if(!busy&&v.readyState>=2){busy=true;try{await hands.send({image:v})}catch(e){}busy=false}requestAnimationFrame(feed)})();
+ }catch(e){dbg('XATO: '+(e.name||'')+' '+(e.message||e))}
+ snd(440,.2);$('st').remove();requestAnimationFrame(loop)};
+</script></body></html>
